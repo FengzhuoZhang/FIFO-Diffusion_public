@@ -129,6 +129,59 @@ class DDIMSampler(object):
                                                     latents_dir=latents_dir,
                                                     **kwargs)
         return samples, intermediates
+    
+    @torch.no_grad()
+    def outpaintingsample(
+                        self,
+                        cond,
+                        shape,
+                        latent,
+                        outpaint_num,
+                        x0=None,
+                        temperature=1.,
+                        noise_dropout=0.,
+                        score_corrector=None,
+                        corrector_kwargs=None,
+                        unconditional_guidance_scale=1.,
+                        unconditional_conditioning=None,
+                        latents_dir=None,
+                        # this has to come in the same format as the conditioning, # e.g. as encoded tokens, ...
+                        **kwargs):
+        device = self.model.betas.device        
+        b = shape[0]
+        img = torch.randn(shape, device=device) # [1,4,16,40,64]
+        
+
+        timesteps = self.ddim_timesteps
+            
+        intermediates = {'x_inter': [img], 'pred_x0': [img]}
+        time_range = np.flip(timesteps)
+        total_steps =  timesteps.shape[0]
+        iterator = time_range
+
+        init_x0 = False
+
+        for i, step in enumerate(iterator):
+            if i == 0 and latents_dir is not None:
+                torch.save(img, f"{latents_dir}/{i}.pt")
+            index = total_steps - i - 1
+            alpha = self.ddim_alphas[index]
+            img[:,:,:(16-outpaint_num)] = (alpha)**(0.5) *latent + (1-alpha)**(0.5) * torch.randn_like(latent)
+            ts = torch.full((b,), step, device=device, dtype=torch.long) # [1]
+            outs = self.p_sample_ddim(img, cond, ts, index=index, use_original_steps=False,
+                                      quantize_denoised=False, temperature=temperature,
+                                      noise_dropout=noise_dropout, score_corrector=score_corrector,
+                                      corrector_kwargs=corrector_kwargs,
+                                      unconditional_guidance_scale=unconditional_guidance_scale,
+                                      unconditional_conditioning=unconditional_conditioning,
+                                      x0=x0,
+                                      **kwargs)
+            
+            img, pred_x0 = outs
+        img[:,:,:(16-outpaint_num)] = latent
+        return img, intermediates
+        
+        
 
     @torch.no_grad()
     def ddim_sampling(self, cond, shape,

@@ -9,6 +9,7 @@ opensoraplan_models/
 # venvs
 .fifo
 .sora
+.env
 
 # others
 taming

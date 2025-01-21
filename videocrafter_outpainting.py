@@ -9,15 +9,15 @@ import imageio
 from pytorch_lightning import seed_everything
 
 from scripts.evaluation.funcs import load_model_checkpoint, load_prompts, load_image_batch, get_filelist, save_gif
-from scripts.evaluation.funcs import base_ddim_sampling, fifo_ddim_sampling
+from scripts.evaluation.funcs import base_ddim_sampling, fifo_ddim_sampling, outpainting_ddim_sampling
 from utils.utils import instantiate_from_config
-from kn_util.utils import setup_logger_loguru, setup_debugpy
 from lvdm.models.samplers.ddim import DDIMSampler
+from kn_util.utils import setup_logger_loguru, setup_debugpy
 
 
 def set_directory(args, prompt):
     if args.output_dir is None:
-        output_dir = f"results/videocraft_v2_fifo/random_noise/{prompt[:100]}"
+        output_dir = f"results/videocraft_v2_outpainting_{args.outpaint_num}_num_infer_steps_{args.num_inference_steps}/random_noise/{prompt[:100]}"
         if args.eta != 1.0:
             output_dir += f"/eta{args.eta}"
 
@@ -33,7 +33,7 @@ def set_directory(args, prompt):
     else:
         output_dir = args.output_dir
 
-    latents_dir = f"results/videocraft_v2_fifo/latents/{args.num_inference_steps}steps/{prompt[:100]}/eta{args.eta}"
+    latents_dir = f"results/videocraft_v2_outpainting_{args.outpaint_num}_num_infer_steps_{args.num_inference_steps}/latents/{args.num_inference_steps}steps/{prompt[:100]}/eta{args.eta}"
 
     print("The results will be saved in", output_dir)
     print("The latents will be saved in", latents_dir)
@@ -97,7 +97,7 @@ def main(args):
                                                 latents_dir=latents_dir)
             save_gif(base_tensor, output_dir, "origin")
 
-        video_frames = fifo_ddim_sampling(
+        video_frames = outpainting_ddim_sampling(
             args, model, cond, noise_shape, ddim_sampler, args.unconditional_guidance_scale, output_dir=output_dir, latents_dir=latents_dir, save_frames=args.save_frames
         )
         if args.output_dir is None:
@@ -106,10 +106,6 @@ def main(args):
             output_path = output_dir+f"/{prompt[:100]}"
 
         imageio.mimsave(output_path+".mp4", video_frames[-args.new_video_length:], fps=args.output_fps)
-        # if args.use_mp4:
-        #     imageio.mimsave(output_path+".mp4", video_frames[-args.new_video_length:], fps=args.output_fps)
-        # else:
-        #     imageio.mimsave(output_path+".gif", video_frames[-args.new_video_length:], duration=int(1000/args.output_fps)) 
 
 
 if __name__ == "__main__":
@@ -119,9 +115,11 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=321)
     parser.add_argument("--video_length", type=int, default=16, help="f in paper")
     parser.add_argument("--num_partitions", "-n", type=int, default=4, help="n in paper")
-    parser.add_argument("--num_inference_steps", type=int, default=16, help="number of inference steps, it will be f * n forcedly")
+    parser.add_argument("--outpaint_num", type=int, default=8)
+    parser.add_argument("--outpainting_steps", type=int, default=20, help="number of inference steps, it will be f * n forcedly")
+    parser.add_argument("--num_inference_steps", type=int, default=64, help="number of inference steps, it will be f * n forcedly")
     parser.add_argument("--prompt_file", "-p", type=str, default="prompts/test_prompts.txt", help="path to the prompt file")
-    parser.add_argument("--new_video_length", "-l", type=int, default=300, help="N in paper; desired length of the output video")
+    parser.add_argument("--new_video_length", "-l", type=int, default=100, help="N in paper; desired length of the output video")
     parser.add_argument("--num_processes", type=int, default=1, help="number of processes if you want to run only the subset of the prompts")
     parser.add_argument("--rank", type=int, default=0, help="rank of the process(0~num_processes-1)")
     parser.add_argument("--height", type=int, default=320, help="height of the output video")
@@ -134,11 +132,11 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir", type=str, default=None, help="custom output directory")
     parser.add_argument("--use_mp4", action="store_true", default=False, help="use mp4 format for the output video")
     parser.add_argument("--output_fps", type=int, default=10, help="fps of the output video")
-    setup_debugpy(force=True)
 
     args = parser.parse_args()
+    setup_debugpy(force=True)
 
-    args.num_inference_steps = args.video_length * args.num_partitions
+    args.outpainting_steps = (args.new_video_length-16)//args.outpaint_num
 
     seed_everything(args.seed)
 

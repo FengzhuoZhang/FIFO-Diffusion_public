@@ -1,0 +1,2 @@
+CUDA_VISIBLE_DEVICES=0 DEBUGPY=1 python videocrafter_main.py
+CUDA_VISIBLE_DEVICES=0 python videocrafter_outpainting.py

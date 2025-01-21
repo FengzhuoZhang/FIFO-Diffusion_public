@@ -10,6 +10,10 @@ from tqdm import trange
 sys.path.insert(1, os.path.join(sys.path[0], '..', '..'))
 from lvdm.models.samplers.ddim import DDIMSampler
 
+def load_latents(args, latents_dir):
+    video = torch.load(latents_dir+f"/{args.num_inference_steps}.pt")
+    return video
+
 
 def prepare_latents(args, latents_dir, sampler):
     latents_list = []
@@ -240,6 +244,81 @@ def fifo_ddim_sampling(args, model, conditioning, noise_shape, ddim_sampler,\
         fifo_video_frames.append(image)
             
         latents = shift_latents(latents)
+
+    return fifo_video_frames
+
+
+def outpainting_ddim_sampling(args, model, conditioning, noise_shape, ddim_sampler,\
+                        cfg_scale=1.0, output_dir=None, latents_dir=None, save_frames=False, **kwargs):
+    batch_size = noise_shape[0]
+    kwargs.update({"clean_cond": True})
+
+    # check condition bs
+    if conditioning is not None:
+        if isinstance(conditioning, dict):
+            try:
+                cbs = conditioning[list(conditioning.keys())[0]].shape[0]
+            except:
+                cbs = conditioning[list(conditioning.keys())[0]][0].shape[0]
+
+            if cbs != batch_size:
+                print(f"Warning: Got {cbs} conditionings but batch-size is {batch_size}")
+        else:
+            if conditioning.shape[0] != batch_size:
+                print(f"Warning: Got {conditioning.shape[0]} conditionings but batch-size is {batch_size}")
+    
+    cond = conditioning
+
+    ## construct unconditional guidance
+    if cfg_scale != 1.0:
+        prompts = batch_size * [""]
+        #prompts = N * T * [""]  ## if is_imgbatch=True
+        uc_emb = model.get_learned_conditioning(prompts)
+        
+        uc = {key:cond[key] for key in cond.keys()}
+        uc.update({'c_crossattn': [uc_emb]})
+        
+    else:
+        uc = None
+    
+    latents = load_latents(args, latents_dir)
+
+    num_frames_per_gpu = args.video_length
+    if args.save_frames:
+        fifo_dir = os.path.join(output_dir, "fifo")
+        os.makedirs(fifo_dir, exist_ok=True)
+
+    fifo_video_frames = []
+
+    timesteps = ddim_sampler.ddim_timesteps
+    indices = np.arange(args.num_inference_steps)
+
+    for i in trange(args.outpainting_steps, desc="fifo sampling"):
+        input_latents = latents[:,:,-(16-args.outpaint_num):].clone()
+
+        output_latents, _ = ddim_sampler.outpaintingsample(
+                                        cond=cond,
+                                        shape=noise_shape,
+                                        latent=input_latents,
+                                        outpaint_num=args.outpaint_num,
+                                        unconditional_guidance_scale=cfg_scale,
+                                        unconditional_conditioning=uc,
+                                        **kwargs
+                                        )
+        latents = torch.concat([latents, output_latents[:,:,-args.outpaint_num:]],dim=2)
+        del output_latents
+    
+
+    # reconstruct from latent to pixel space
+    for i in range(latents.shape[2]):
+        frame_tensor = model.decode_first_stage_2DAE(latents[:,:,[i]]) # b,c,1,H,W
+        image = tensor2image(frame_tensor)
+        if save_frames:
+            fifo_path = os.path.join(fifo_dir, f"{i}.png")
+            image.save(fifo_path)
+        fifo_video_frames.append(image)
+        
+    latents = shift_latents(latents)
 
     return fifo_video_frames
 
